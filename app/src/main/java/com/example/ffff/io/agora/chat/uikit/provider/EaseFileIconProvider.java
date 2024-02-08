@@ -1,4 +1,15 @@
-package com.example.ffff.io.agora.chat.uikit.provider;
+package io.agora.chat.uikit.provider;
 
-public class EaseFileIconProvider {
+import android.graphics.drawable.Drawable;
+
+/**
+ * The file icon provider
+ */
+public interface EaseFileIconProvider {
+    /**
+     * Use filename to provide the icon
+     * @param filename
+     * @return
+     */
+    Drawable getFileIcon(String filename);
 }

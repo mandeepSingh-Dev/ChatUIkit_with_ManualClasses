@@ -54,7 +54,7 @@ public class EaseTitleBar extends RelativeLayout implements View.OnClickListener
     private int mHeight;
     private boolean mDisplayHomeAsUpEnabled;
     private ConstraintLayout clTitle;
-    private EaseImageView ivIcon;
+    private io.agora.chat.uikit.widget.EaseImageView ivIcon;
     private ImageView msgUnreadIcon;
     Drawable leftDrawable;
     private OnIconClickListener iconClickListener;
@@ -436,7 +436,7 @@ public class EaseTitleBar extends RelativeLayout implements View.OnClickListener
         return toolbar;
     }
 
-    public EaseImageView getIcon() {
+    public io.agora.chat.uikit.widget.EaseImageView getIcon() {
         return ivIcon;
     }
 

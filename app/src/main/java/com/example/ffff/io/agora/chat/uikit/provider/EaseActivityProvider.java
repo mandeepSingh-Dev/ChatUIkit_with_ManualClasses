@@ -1,4 +1,11 @@
-package com.example.ffff.io.agora.chat.uikit.provider;
+package io.agora.chat.uikit.provider;
 
-public class EaseActivityProvider {
+
+public interface EaseActivityProvider {
+    /**
+     * Provide a activity from app by activityName of UIKit
+     * @param activityName
+     * @return
+     */
+    Class getActivity(String activityName);
 }

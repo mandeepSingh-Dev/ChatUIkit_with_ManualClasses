@@ -1,105 +1,409 @@
 package io.agora.chat.uikit.widget;
 
-
 import android.content.Context;
+import android.content.res.TypedArray;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.RectF;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
-import android.text.TextUtils;
+import android.os.Build;
 import android.util.AttributeSet;
-import android.view.View;
-import android.widget.TextView;
+import android.view.MotionEvent;
 
-import androidx.annotation.ColorInt;
-import androidx.constraintlayout.widget.ConstraintLayout;
+import androidx.annotation.Nullable;
+import androidx.appcompat.widget.AppCompatImageView;
 
-import com.bumptech.glide.Glide;
+import java.lang.reflect.Method;
 
-import io.agora.chat.Presence;
 import io.agora.chat.uikit.R;
-import io.agora.chat.uikit.utils.EasePresenceUtil;
 
 
-public class EasePresenceView extends ConstraintLayout {
-    private EaseImageView ivAvatar;
-    private EaseImageView ivPresence;
-    private TextView tvName;
-    private TextView tvPresence;
+/**
+ * Canvas#save(int) has been removed from sdk-28, see detail from:
+ * https://issuetracker.google.com/issues/110856542
+ * so this helper classes uses reflection to access the API on older devices.
+ */
+@SuppressWarnings("JavaReflectionMemberAccess")
+class CanvasLegacy {
+    static final int MATRIX_SAVE_FLAG;
+    static final int CLIP_SAVE_FLAG;
+    static final int HAS_ALPHA_LAYER_SAVE_FLAG;
+    static final int FULL_COLOR_LAYER_SAVE_FLAG;
+    static final int CLIP_TO_LAYER_SAVE_FLAG;
 
-    public EasePresenceView(Context context) {
-        this(context, null);
+
+    private static final Method SAVE;
+
+    static {
+        try {
+            MATRIX_SAVE_FLAG = (int) Canvas.class.getField("MATRIX_SAVE_FLAG").get(null);
+            CLIP_SAVE_FLAG = (int) Canvas.class.getField("CLIP_SAVE_FLAG").get(null);
+            HAS_ALPHA_LAYER_SAVE_FLAG = (int) Canvas.class.getField("HAS_ALPHA_LAYER_SAVE_FLAG").get(null);
+            FULL_COLOR_LAYER_SAVE_FLAG = (int) Canvas.class.getField("FULL_COLOR_LAYER_SAVE_FLAG").get(null);
+            CLIP_TO_LAYER_SAVE_FLAG = (int) Canvas.class.getField("CLIP_TO_LAYER_SAVE_FLAG").get(null);
+
+            SAVE = Canvas.class.getMethod("saveLayer", float.class, float.class, float.class, float.class, Paint.class, int.class);
+        } catch (Throwable e) {
+            throw sneakyThrow(e);
+        }
     }
 
-    public EasePresenceView(Context context, AttributeSet attrs) {
-        this(context, attrs, 0);
+    static void saveLayer(Canvas canvas, float left, float top, float right, float bottom, @Nullable Paint paint, int saveFlags) {
+        try {
+            SAVE.invoke(canvas, left, top, right, bottom, paint, saveFlags);
+        } catch (Throwable e) {
+            throw sneakyThrow(e);
+        }
     }
 
-    public EasePresenceView(Context context, AttributeSet attrs, int defStyleAttr) {
+    private static RuntimeException sneakyThrow(Throwable t) {
+        if (t == null) throw new NullPointerException("t");
+        return CanvasLegacy.sneakyThrow0(t);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> T sneakyThrow0(Throwable t) throws T {
+        throw (T) t;
+    }
+}
+
+
+/**
+ * Created by lzan13 on 2015/4/30.
+ * customized ImageView，Rounded Rectangle and border is implemented, and change color when you press
+ */
+public class EaseImageView extends AppCompatImageView {
+    // paint when user press
+    private Paint pressPaint;
+    private int width;
+    private int height;
+
+    // default bitmap config
+    private static final Bitmap.Config BITMAP_CONFIG = Bitmap.Config.ARGB_8888;
+    private static final int COLORDRAWABLE_DIMENSION = 1;
+
+    // border color
+    private int borderColor;
+    // width of border
+    private int borderWidth;
+    // alpha when pressed
+    private int pressAlpha;
+    // color when pressed
+    private int pressColor;
+    // radius
+    private int radius;
+    // rectangle or round, 1 is circle, 2 is rectangle
+    private int shapeType;
+
+    public EaseImageView(Context context) {
+        super(context);
+        init(context, null);
+    }
+
+    public EaseImageView(Context context, AttributeSet attrs) {
+        super(context, attrs);
+        init(context, attrs);
+    }
+
+    public EaseImageView(Context context, AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr);
-        init();
+        init(context, attrs);
     }
 
-    private void init() {
-        inflate(getContext(), R.layout.presence_view, this);
-        ivAvatar = findViewById(R.id.iv_user_avatar);
-        ivPresence = findViewById(R.id.iv_presence);
-        tvName = findViewById(R.id.tv_name);
-        tvPresence = findViewById(R.id.tv_presence);
-        tvPresence.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (listener != null) {
-                    listener.onPresenceClick(v);
-                }
-            }
-        });
-    }
+    private void init(Context context, AttributeSet attrs) {
+        //init the value
+        borderWidth = 0;
+        borderColor = 0xddffffff;
+        pressAlpha = 0x42;
+        pressColor = 0x42000000;
+        radius = 16;
+        shapeType = 0;
 
-    public void setPresenceData(String avatar, Presence presence) {
-        if (!TextUtils.isEmpty(avatar)) {
-            try {
-                int resourceId = Integer.parseInt(avatar);
-                Glide.with(this)
-                        .load(resourceId)
-                        .placeholder(R.drawable.ease_default_avatar)
-                        .error(R.drawable.ease_default_avatar)
-                        .into(ivAvatar);
-            } catch (NumberFormatException e) {
-                Glide.with(this)
-                        .load(avatar)
-                        .placeholder(R.drawable.ease_default_avatar)
-                        .error(R.drawable.ease_default_avatar)
-                        .into(ivAvatar);
-            }
+        // get attribute of EaseImageView
+        if (attrs != null) {
+            TypedArray array = context.obtainStyledAttributes(attrs, R.styleable.EaseImageView);
+            borderColor = array.getColor(R.styleable.EaseImageView_ease_border_color, borderColor);
+            borderWidth = array.getDimensionPixelOffset(R.styleable.EaseImageView_ease_border_width, borderWidth);
+            pressAlpha = array.getInteger(R.styleable.EaseImageView_ease_press_alpha, pressAlpha);
+            pressColor = array.getColor(R.styleable.EaseImageView_ease_press_color, pressColor);
+            radius = array.getDimensionPixelOffset(R.styleable.EaseImageView_ease_radius, radius);
+            shapeType = array.getInteger(R.styleable.EaseImageView_ease_shape_type, shapeType);
+            array.recycle();
         }
-        tvPresence.setText(EasePresenceUtil.getPresenceString(getContext(), presence));
-        ivPresence.setImageResource(EasePresenceUtil.getPresenceIcon(getContext(), presence));
-        tvName.setText(presence.getPublisher());
+
+        // set paint when pressed
+        pressPaint = new Paint();
+        pressPaint.setAntiAlias(true);
+        pressPaint.setStyle(Paint.Style.FILL);
+        pressPaint.setColor(pressColor);
+        pressPaint.setAlpha(0);
+        pressPaint.setFlags(Paint.ANTI_ALIAS_FLAG);
+
+        setDrawingCacheEnabled(true);
+        setWillNotDraw(false);
     }
 
-    public interface OnPresenceClickListener {
-        void onPresenceClick(View v);
+    @Override
+    protected void onDraw(Canvas canvas) {
+
+        if (shapeType == 0) {
+            super.onDraw(canvas);
+            return;
+        }
+        Drawable drawable = getDrawable();
+        if (drawable == null) {
+            return;
+        }
+        // the width and height is in xml file
+        if (getWidth() == 0 || getHeight() == 0) {
+            return;
+        }
+        Bitmap bitmap = getBitmapFromDrawable(drawable);
+        if(bitmap == null) {
+            return;
+        }
+        drawDrawable(canvas, bitmap);
+
+        if(isClickable()){
+            drawPress(canvas);
+        }
+        drawBorder(canvas);
     }
 
-    private OnPresenceClickListener listener;
+    /**
+     * draw Rounded Rectangle
+     *
+     * @param canvas
+     * @param bitmap
+     */
+    private void drawDrawable(Canvas canvas, Bitmap bitmap) {
+        Paint paint = new Paint();
+        paint.setColor(0xffffffff);
+        paint.setAntiAlias(true); //smooths out the edges of what is being drawn
+        PorterDuffXfermode xfermode = new PorterDuffXfermode(PorterDuff.Mode.SRC_IN);
 
-    public void setOnPresenceClickListener(OnPresenceClickListener listener) {
-        this.listener = listener;
-    }
-
-    public void setPresenceTextViewArrowVisiable(boolean visiable) {
-        if (visiable) {
-            Drawable arrow = getResources().getDrawable(R.drawable.ease_presence_arrow_left);
-            tvPresence.setCompoundDrawablesWithIntrinsicBounds(null, null, arrow, null);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            // set flags
+            int saveFlags = CanvasLegacy.MATRIX_SAVE_FLAG
+                    | CanvasLegacy.CLIP_SAVE_FLAG
+                    | CanvasLegacy.HAS_ALPHA_LAYER_SAVE_FLAG
+                    | CanvasLegacy.FULL_COLOR_LAYER_SAVE_FLAG
+                    | CanvasLegacy.CLIP_TO_LAYER_SAVE_FLAG;
+            CanvasLegacy.saveLayer(canvas,0, 0, width, height, null, saveFlags);
         } else {
-            tvPresence.setCompoundDrawablesWithIntrinsicBounds(null, null, null, null);
+            canvas.saveLayer(0, 0, width, height, null);
+        }
+
+        if (shapeType == 1) {
+            canvas.drawCircle(width / 2, height / 2, width / 2 - 1, paint);
+        } else if (shapeType == 2) {
+            RectF rectf = new RectF(1, 1, getWidth() - 1, getHeight() - 1);
+            canvas.drawRoundRect(rectf, radius + 1, radius + 1, paint);
+        }
+
+        paint.setXfermode(xfermode);
+
+        float scaleWidth = ((float) getWidth()) / bitmap.getWidth();
+        float scaleHeight = ((float) getHeight()) / bitmap.getHeight();
+
+        Matrix matrix = new Matrix();
+        matrix.postScale(scaleWidth, scaleHeight);
+
+        //bitmap scale
+        bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+
+        canvas.drawBitmap(bitmap, 0, 0, paint);
+        canvas.restore();
+    }
+
+    /**
+     * draw the effect when pressed
+     *
+     * @param canvas
+     */
+    private void drawPress(Canvas canvas) {
+        // check is rectangle or circle
+        if (shapeType == 1) {
+            canvas.drawCircle(width / 2, height / 2, width / 2 - 1, pressPaint);
+        } else if (shapeType == 2) {
+            RectF rectF = new RectF(1, 1, width - 1, height - 1);
+            canvas.drawRoundRect(rectF, radius + 1, radius + 1, pressPaint);
         }
     }
 
-    public void setPresenTextViewColor(@ColorInt int color) {
-        tvPresence.setTextColor(color);
+    /**
+     * draw customized border
+     *
+     * @param canvas
+     */
+    private void drawBorder(Canvas canvas) {
+        if (borderWidth > 0) {
+            Paint paint = new Paint();
+            paint.setStrokeWidth(borderWidth);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setColor(borderColor);
+            paint.setAntiAlias(true);
+            // // check is rectangle or circle
+            if (shapeType == 1) {
+                canvas.drawCircle(width / 2, height / 2, (width - borderWidth) / 2, paint);
+            } else if (shapeType == 2) {
+                RectF rectf = new RectF(borderWidth / 2, borderWidth / 2, getWidth() - borderWidth / 2,
+                        getHeight() - borderWidth / 2);
+                canvas.drawRoundRect(rectf, radius, radius, paint);
+            }
+        }
     }
 
-    public void setNameTextViewVisiablity(int visiable) {
-        tvName.setVisibility(visiable);
+    /**
+     * monitor the size change
+     *
+     * @param w
+     * @param h
+     * @param oldw
+     * @param oldh
+     */
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        width = w;
+        height = h;
     }
 
+    /**
+     * monitor if touched
+     *
+     * @param event
+     * @return
+     */
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        switch (event.getAction()) {
+            case MotionEvent.ACTION_DOWN:
+                pressPaint.setAlpha(pressAlpha);
+                invalidate();
+                break;
+            case MotionEvent.ACTION_UP:
+                pressPaint.setAlpha(0);
+                invalidate();
+                break;
+            case MotionEvent.ACTION_MOVE:
+
+                break;
+            default:
+                pressPaint.setAlpha(0);
+                invalidate();
+                break;
+        }
+        return super.onTouchEvent(event);
+    }
+
+    /**
+     *
+     * @param drawable
+     * @return
+     */
+    private Bitmap getBitmapFromDrawable(Drawable drawable) {
+        if (drawable == null) {
+            return null;
+        }
+
+        if (drawable instanceof BitmapDrawable) {
+            return ((BitmapDrawable) drawable).getBitmap();
+        }
+
+        Bitmap bitmap;
+        int width = Math.max(drawable.getIntrinsicWidth(), 2);
+        int height = Math.max(drawable.getIntrinsicHeight(), 2);
+        try {
+            bitmap = Bitmap.createBitmap(width, height, BITMAP_CONFIG);
+            Canvas canvas = new Canvas(bitmap);
+            drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
+            drawable.draw(canvas);
+        } catch (IllegalArgumentException e) {
+            e.printStackTrace();
+            bitmap = null;
+        }
+        return bitmap;
+    }
+
+    /**
+     * set border color
+     *
+     * @param borderColor
+     */
+    public void setBorderColor(int borderColor) {
+        this.borderColor = borderColor;
+        invalidate();
+    }
+
+    /**
+     * set border width
+     *
+     * @param borderWidth
+     */
+    public void setBorderWidth(int borderWidth) {
+        this.borderWidth = borderWidth;
+    }
+
+    /**
+     * set alpha when pressed
+     *
+     * @param pressAlpha
+     */
+    public void setPressAlpha(int pressAlpha) {
+        this.pressAlpha = pressAlpha;
+    }
+
+    /**
+     * set color when pressed
+     *
+     * @param pressColor
+     */
+    public void setPressColor(int pressColor) {
+        this.pressColor = pressColor;
+    }
+
+    /**
+     * set radius
+     *
+     * @param radius
+     */
+    public void setRadius(int radius) {
+        this.radius = radius;
+        invalidate();
+    }
+
+    /**
+     * set shape,1 is circle, 2 is rectangle
+     *
+     * @param shapeType
+     */
+    public void setShapeType(int shapeType) {
+        this.shapeType = shapeType;
+        invalidate();
+    }
+
+    /**
+     * set shape type
+     * @param shapeType
+     */
+    public void setShapeType(ShapeType shapeType) {
+        if(shapeType == null) {
+            return;
+        }
+        this.shapeType = shapeType.ordinal();
+        invalidate();
+    }
+
+    /**
+     * Image shape enum
+     */
+    public enum ShapeType {
+        NONE, ROUND, RECTANGLE
+    }
 }

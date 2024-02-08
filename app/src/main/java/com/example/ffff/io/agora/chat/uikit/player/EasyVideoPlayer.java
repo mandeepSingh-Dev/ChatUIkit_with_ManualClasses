@@ -1,4 +1,6 @@
-package com.example.ffff.io.agora.chat.uikit.player;
+package io.agora.chat.uikit.player;
 
-public class EasyVideoPlayer {
+public interface EasyVideoProgressCallback {
+
+    void onVideoProgressUpdate(int position, int duration);
 }
